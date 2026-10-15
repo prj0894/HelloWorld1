@@ -1,0 +1,87 @@
+name: CD
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  backend-deploy:
+    name: Build, push to ECR and update ECS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "${{ secrets.ECR_REPOSITORY }}" || \
+            aws ecr create-repository --repository-name "${{ secrets.ECR_REPOSITORY }}"
+
+      - name: Get AWS account ID
+        run: |
+          echo "AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
+          echo "IMAGE_TAG=${GITHUB_SHA::8}" >> $GITHUB_ENV
+
+      - name: Log in to ECR
+        run: |
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+
+      - name: Prepare task definition
+        run: |
+          sed "s|IMAGE_URI_PLACEHOLDER|${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}|g; s|AWS_REGION_PLACEHOLDER|${{ secrets.AWS_REGION }}|g" ecs/task-def.json.template > ecs/task-def.json
+
+      - name: Register task definition
+        run: |
+          aws ecs register-task-definition --cli-input-json file://ecs/task-def.json
+
+      - name: Update ECS service (force new deployment)
+        run: |
+          aws ecs update-service --cluster "${{ secrets.ECS_CLUSTER }}" --service "${{ secrets.ECS_SERVICE }}" --force-new-deployment
+
+  frontend-deploy:
+    name: Deploy frontend to S3 + invalidate CloudFront
+    runs-on: ubuntu-latest
+    needs: backend-deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Build frontend (if any)
+        run: |
+          # Add build steps if you have a build process (npm run build...), otherwise skip
+          echo "No build; copying static site from frontend/"
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync frontend/ s3://${{ secrets.S3_BUCKET }} --delete
+
+      - name: Create CloudFront invalidation
+        run: |
+          aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} --paths "/*"

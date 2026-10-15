@@ -1,0 +1,30 @@
+{
+  "family": "hello-python-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<AWS_ACCOUNT_ID>:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "hello-backend",
+      "image": "IMAGE_URI_PLACEHOLDER",
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/hello-python-backend",
+          "awslogs-region": "AWS_REGION_PLACEHOLDER",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
