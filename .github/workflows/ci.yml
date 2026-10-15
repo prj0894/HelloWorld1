@@ -1,33 +1,83 @@
-name CI
+name: CI
 
-on
-  push
-    branches [ main ]
-  pull_request
-    branches [ main ]
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
-jobs
-  test
-    runs-on ubuntu-latest
-    steps
-      - name Checkout
-        uses actionscheckout@v4
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name Set up Python
-        uses actionssetup-python@v4
-        with
-          python-version '3.11'
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-      - name Install dev deps
-        run 
+      - name: Install linter
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Run linter
+        run: |
+          flake8 --max-line-length=88
+
+  test:
+    name: Test
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install flake8 pytest
+          pip install pytest
 
-      - name Lint
-        run 
-          flake8 --max-line-length=88  true
+      - name: Run tests
+        run: |
+          pytest -q
 
-      - name Run tests
-        run 
-          pytest -q  true
+  build:
+    name: Build image (CI)
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: hello-world:ci-${{ github.sha }}
