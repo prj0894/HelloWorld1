@@ -1,8 +1,12 @@
-from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from app.main import app
+from fastapi.testclient import TestClient
 
-app = FastAPI()
-@app.get("/", response_class=PlainTextResponse)
+client = TestClient(app)
 
-def root():
-    return "Hello World"
+
+def test_root():
+    resp = client.get("/")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "message" in data
+    assert "Hello World" in data["message"]
